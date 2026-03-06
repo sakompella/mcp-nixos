@@ -1,3 +1,86 @@
+# MCP-NixOS: v2.3.0 Release Notes - HTTP Transport & Modular Architecture
+
+## Overview
+
+MCP-NixOS v2.3.0 adds HTTP transport support for Remote MCP, binary cache status checking, NixHub as a rich metadata source, and restructures the codebase into a modular architecture. This release includes two new user-facing features with no breaking changes.
+
+## Changes in v2.3.0
+
+### 🚀 New Features
+
+- **HTTP Transport Support** (#104): Run the server over HTTP in addition to STDIO
+  - `MCP_NIXOS_TRANSPORT=http` enables HTTP mode (default endpoint: `http://127.0.0.1:8000/mcp`)
+  - Configurable host, port, and path via `MCP_NIXOS_HOST`, `MCP_NIXOS_PORT`, `MCP_NIXOS_PATH`
+  - Stateless mode via `MCP_NIXOS_STATELESS_HTTP=1` for scalable deployments
+  - Works with any MCP client that supports HTTP transport
+
+- **Binary Cache Status** (#92): Check if packages have pre-built binaries on cache.nixos.org
+  - `nix(action="cache", query="hello")` — check cache availability
+  - Shows download size, unpacked size, compression method, and per-platform availability
+  - Resolves package versions to store paths via NixHub API
+
+- **NixHub Package Metadata** (#92): Rich package information from NixHub.io
+  - `nix(action="search", source="nixhub", query="nodejs")` — search with metadata
+  - `nix(action="info", source="nixhub", query="python")` — license, homepage, store paths
+  - Enhanced `nix_versions` with richer version data
+
+### 🏗️ Architecture
+
+- **Modular Codebase Restructure** (#94): Split monolithic `server.py` into focused modules
+  - `mcp_nixos/sources/` — one module per data source (nixos, home_manager, darwin, flakes, etc.)
+  - `mcp_nixos/caches.py` — cache implementations
+  - `mcp_nixos/config.py` — configuration constants
+  - `mcp_nixos/utils.py` — shared utility functions
+  - `mcp_nixos/server.py` — MCP tools and routing only
+
+### 🔧 Bug Fixes
+
+- **serverInfo Version** (#109): Report package version correctly in MCP serverInfo response
+- **pytest Config** (#105): Use list types for pytest ini_options
+- **Channel Validation**: Corrected patch paths for channel validation tests
+- **CI**: Allow dependabot PRs in Claude Code Review workflow
+
+### 📦 Dependencies & CI
+
+- Bumped `aws-actions/configure-aws-credentials` from 5 to 6
+- Website dependency updates: shiki, autoprefixer, @types/react
+- Added `@pytest.mark.unit` decorators to test suite
+
+## Installation
+
+```bash
+# Install with pip
+pip install mcp-nixos==2.3.0
+
+# Install with uv
+uv pip install mcp-nixos==2.3.0
+
+# Run directly with nix
+nix run github:utensils/mcp-nixos
+```
+
+## Docker Images
+
+```bash
+# Pull from Docker Hub
+docker pull utensils/mcp-nixos:2.3.0
+
+# Pull from GitHub Container Registry
+docker pull ghcr.io/utensils/mcp-nixos:2.3.0
+```
+
+## Migration Notes
+
+This is a drop-in replacement for v2.2.0. All existing queries work unchanged. The new HTTP transport and binary cache/NixHub features are entirely additive.
+
+## Contributors
+
+- James Brink (@utensils) — Binary cache, NixHub, modular architecture, serverInfo fix
+- ReStranger (@ReStranger) — HTTP transport support (#104)
+- David Dudson (@DavidDudson) — pytest config fix (#105)
+
+---
+
 # MCP-NixOS: v2.2.0 Release Notes - Documentation Sources & Flake Inputs
 
 ## Overview

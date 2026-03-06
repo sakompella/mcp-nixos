@@ -164,10 +164,10 @@ MCP_NIXOS_TRANSPORT=http MCP_NIXOS_STATELESS_HTTP=1 mcp-nixos`}
             </div>
           </div>
 
-          {/* New in v2.2.0 */}
+          {/* New in v2.3.0 */}
             <div className="bg-white rounded-lg shadow-md border-l-4 border-green-500 p-6 mt-8">
               <h2 className="text-2xl font-bold text-nix-dark mb-4">
-                New in v2.2.0: Binary Cache & NixHub
+                New in v2.3.0: HTTP Transport, Binary Cache & NixHub
               </h2>
               <p className="text-gray-700 mb-4">
                 Two powerful new features to help you understand what&apos;s actually happening with your packages.

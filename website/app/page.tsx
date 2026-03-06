@@ -20,7 +20,7 @@ export default function Home() {
           <h1 className="text-4xl md:text-6xl font-bold mb-6">MCP-NixOS</h1>
           <div className="mb-4">
             <span className="inline-block bg-nix-secondary text-white px-4 py-2 rounded-full text-sm font-semibold">
-              🎉 v2.2.0 - Binary Cache & NixHub
+              🎉 v2.3.0 - HTTP Transport & Modular Architecture
             </span>
           </div>
           <div className="mb-8 max-w-3xl mx-auto">
