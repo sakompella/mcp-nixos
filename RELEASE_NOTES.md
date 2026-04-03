@@ -1,3 +1,58 @@
+# MCP-NixOS: v2.3.1 Release Notes - Dotted Package Name Search Fix
+
+## Overview
+
+MCP-NixOS v2.3.1 fixes package search and info lookups for dotted/namespaced attribute paths (e.g., `kdePackages.qt6ct`, `python314Packages.matplotlib`). Previously, models were unable to find packages by their exact namespaced names.
+
+## Changes in v2.3.1
+
+### 🔧 Bug Fixes
+
+- **Dotted Package Name Search** (#118): Search now queries `package_attr_name` in Elasticsearch and extracts the last component of dotted names for `package_pname` matching. Searching for `kdePackages.qt6ct` now correctly finds the `qt6ct` package.
+- **Info Lookup by Attribute Path** (#118): The `info` action falls back to `package_attr_name` when the `pname` lookup returns no results, so `nix(action="info", query="kdePackages.qt6ct")` now works.
+- **Attribute Path in Output** (#118): Search results and info output now display the full attribute path (e.g., `kdePackages.qt6ct`) instead of just the pname (`qt6ct`), helping users identify which package set a package belongs to.
+
+### 🧹 Housekeeping
+
+- **CLAUDE.md / AGENTS.md**: Fixed circular symlinks. `CLAUDE.md` is now the source of truth, `AGENTS.md` symlinks to it.
+
+### 📦 Dependencies
+
+- No changes from previous version
+
+## Installation
+
+```bash
+# Install with pip
+pip install mcp-nixos==2.3.1
+
+# Install with uv
+uv pip install mcp-nixos==2.3.1
+
+# Run directly with nix
+nix run github:utensils/mcp-nixos
+```
+
+## Docker Images
+
+```bash
+# Pull from Docker Hub
+docker pull utensils/mcp-nixos:2.3.1
+
+# Pull from GitHub Container Registry
+docker pull ghcr.io/utensils/mcp-nixos:2.3.1
+```
+
+## Migration Notes
+
+Drop-in replacement with no user-facing breaking changes. Search results now include attribute paths in the output, which provides more information but doesn't change the format in a breaking way.
+
+## Contributors
+
+- James Brink (@utensils) - Dotted package name fix
+
+---
+
 # MCP-NixOS: v2.3.0 Release Notes - HTTP Transport & Modular Architecture
 
 ## Overview
