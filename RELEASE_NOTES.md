@@ -1,3 +1,74 @@
+# MCP-NixOS: v2.3.2 Release Notes - Local Agent Tool Descriptions
+
+## Overview
+
+MCP-NixOS v2.3.2 improves the `nix` tool's descriptions and error messages so smaller local models (qwen3.6, qwen3-coder via Pi, etc.) can reliably map intent to the right `action`/`type` combo. Also ships a project-local Pi Coding Agent extension.
+
+## Changes in v2.3.2
+
+### 🔧 Bug Fixes
+
+- **Rename `action=options` → `action=browse`** (#125): The old name suggested "the options action" but actually meant "browse an option hierarchy by prefix" and rejected `source=nixos` outright. Small models reasonably tried it for NixOS options and hit a dead end. `action=options` is still accepted as a silent alias for backward compatibility.
+- **`browse` with `source=nixos` now redirects** (#125): Instead of a generic "not for nixos" rejection, the error now contains the exact correct JSON (`{"action": "search", ..., "type": "options"}`) so a retry uses the right shape.
+- **Pi wrapper fastmcp 2.x compatibility** (#128): The `.pi/extensions/mcp-nixos.ts` wrapper now unwraps FastMCP `FunctionTool` via `getattr(tool, "fn", tool)`. Previously it worked on fastmcp 3.x (plain function) but failed on fastmcp 2.x (Nix dev-shell / CI) with `TypeError: 'FunctionTool' object is not callable`.
+- **Pi wrapper cancellation propagation** (#128): Aborted tool calls now short-circuit the Python-candidate retry loop instead of spawning further `uv`/`python3`/`python` processes.
+
+### 📚 Tool Description Improvements (#123, #125)
+
+- **Concrete JSON examples in the `nix` docstring**: 9 copy-pasteable examples (`search`, `info`, `browse`, `channels`, `cache`, etc.) that small models can pattern-match against.
+- **Replaced pipe-separated values with plain prose** in parameter and error messages (e.g. `"one of: packages, options, programs, flakes"` instead of `"packages|options|programs|flakes"`). Pipes looked like pseudo-JSON to weaker models and fed back confusingly into the next attempt.
+- **Tightened every `Annotated[...]` description** to say which action uses each parameter (e.g. `version`/`system` now say "only used by action=cache").
+- **Documented the `flake-inputs` path mode** for `source` in both the Python tool and the Pi schema.
+- **Concrete examples in redirect error** — replaced `<keyword>` / `<option.path>` placeholders in the browse-nixos redirect with `nginx` / `services.nginx.enable` so a literal copy is runnable.
+
+### 🧩 Pi Coding Agent
+
+- **Project-local `.pi/extensions/mcp-nixos.ts`**: Auto-loaded by Pi when run in the cloned repo. Wraps the Python tools as native Pi tools (no MCP transport overhead).
+- **README "Option 5: Pi Coding Agent"**: Documents both the `pi-mcp-adapter` path (recommended, speaks MCP) and the project-local extension path.
+- **`.pi/package.json` + `.pi/tsconfig.json`**: Enable clean in-editor type resolution for the extension (optional — `npm install` locally if you want it; Pi itself resolves at runtime).
+
+### 🔧 Tooling
+
+- **Pre-commit ruff bumped** from `v0.4.10` to `v0.14.10` to match the ruff version shipped by the Nix dev-shell / CI, ending a formatter ping-pong on assert layouts.
+
+### 📦 Dependencies
+
+- No runtime dependency changes.
+
+## Installation
+
+```bash
+# Install with pip
+pip install mcp-nixos==2.3.2
+
+# Install with uv
+uv pip install mcp-nixos==2.3.2
+
+# Run directly with nix
+nix run github:utensils/mcp-nixos
+```
+
+## Docker Images
+
+```bash
+# Pull from Docker Hub
+docker pull utensils/mcp-nixos:2.3.2
+
+# Pull from GitHub Container Registry
+docker pull ghcr.io/utensils/mcp-nixos:2.3.2
+```
+
+## Migration Notes
+
+Drop-in replacement with no user-facing breaking changes. The renamed `action=browse` is additive — existing callers using `action=options` continue to work via the alias. Tool description changes are consumed by LLMs, not user code.
+
+## Contributors
+
+- James Brink (@utensils) — Tool description overhaul, Pi extension, release
+- Reporters: @juk0de (#123), @Smona (#125)
+
+---
+
 # MCP-NixOS: v2.3.1 Release Notes - Dotted Package Name Search Fix
 
 ## Overview
