@@ -28,16 +28,17 @@ MCP-NixOS is a Model Context Protocol (MCP) server that provides accurate, real-
     - `flake_inputs.py` - Local flake inputs via nix store.
 - `tests/` - Holds pytest unit and integration tests; markers live in `pytest.ini` and `tests/conftest.py`.
 - `website/` - The Next.js site; static assets live in `website/public/`.
+- `.pi/` - Pi Coding Agent extension that wraps the MCP tools as native Pi tools (Pi does not speak MCP). `extensions/mcp-nixos.ts` spawns a Python subprocess that imports `mcp_nixos.server` and calls the tool functions directly — not part of the MCP server runtime, only relevant when running `pi` in this repo.
 - `flake.nix` - Defines the Nix dev shell and build instructions.
 - `pyproject.toml` - Defines Python packaging and dependencies.
 - `dist/`, `htmlcov/`, and `result/` are generated artifacts; do not edit by hand.
 
 ## Key Architecture
 
-The project is a FastMCP 2.x server (async) with a modular structure (Python 3.11+). The server is organized into focused modules: `server.py` handles MCP tools and routing, `sources/` contains per-source implementations, `config.py` defines constants, `caches.py` manages cached data, and `utils.py` provides shared utilities.
+The project is a FastMCP 3.x server (async) with a modular structure (Python 3.11+). The server is organized into focused modules: `server.py` handles MCP tools and routing, `sources/` contains per-source implementations, `config.py` defines constants, `caches.py` manages cached data, and `utils.py` provides shared utilities.
 
 Only **2 MCP tools** are exposed (consolidated from 17 in v1.0):
-- `nix` - Unified query tool for search/info/stats/options/channels/flake-inputs across all sources.
+- `nix` - Unified query tool for search/info/stats/browse/channels/flake-inputs/cache across all sources. `options` is accepted as a silent alias for `browse` (legacy).
 - `nix_versions` - Package version history from NixHub.io.
 
 ### Data Sources
@@ -168,7 +169,7 @@ pytest tests/ -k "nixos" -v
 1. **Channel Resolution**: The server dynamically discovers available NixOS channels on startup. "stable" always maps to the current stable release.
 2. **Error Handling**: All tools return helpful plain text error messages. API failures gracefully degrade.
 3. **No Caching**: Version 1.0+ removed all caching for simplicity. All queries hit live APIs.
-4. **Async Everything**: Version 1.0.1 migrated to FastMCP 2.x. All tools are async functions. All blocking HTTP calls and file I/O are wrapped in `asyncio.to_thread()` to prevent blocking the event loop.
+4. **Async Everything**: Version 1.0.1 migrated to FastMCP (currently FastMCP 3.x; `fastmcp>=3.2.0` in `pyproject.toml`). All tools are async functions. All blocking HTTP calls and file I/O are wrapped in `asyncio.to_thread()` to prevent blocking the event loop.
 5. **Plain Text Output**: All responses are formatted as human-readable plain text. Never return raw JSON or XML to users.
 6. **Environment Variables**:
    - `ELASTICSEARCH_URL` overrides the NixOS search backend for local testing.
