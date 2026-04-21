@@ -1,3 +1,64 @@
+# MCP-NixOS: v2.4.0 Release Notes - FastMCP 3.x Upgrade
+
+## Overview
+
+MCP-NixOS v2.4.0 upgrades the framework dependency to FastMCP 3.x (`fastmcp>=3.2.0`). No user-facing behavior changes — this is a dependency bump needed to keep the project buildable alongside downstream nixpkgs work that moves consumers (e.g. `ha-mcp`) onto FastMCP 3 (tracked in [NixOS/nixpkgs#511658](https://github.com/NixOS/nixpkgs/pull/511658)).
+
+## Changes in v2.4.0
+
+### 🚀 Framework
+
+- **FastMCP 3.x upgrade** (#127, #130): Bumped `fastmcp>=2.11.0` → `fastmcp>=3.2.0` in `pyproject.toml`. The server's API surface (constructor, `@mcp.tool()`, `mcp.run()` with stdio/http kwargs) is unchanged; both transports continue to work identically.
+- **Nix flake fastmcp 3 override**: The flake overlay temporarily overrides `python3Packages.fastmcp` to build PrefectHQ/fastmcp v3.2.4 directly, mirroring pending nixpkgs PR [#510339](https://github.com/NixOS/nixpkgs/pull/510339). The override lives in `overlays.fastmcp3` and is composed into `overlays.default`, so downstream consumers applying `mcp-nixos.overlays.default` get the upgraded fastmcp automatically. Removable once upstream nixpkgs catches up.
+- **aarch64-linux docker build** (#131): Dropped `pydocket` from the inherited runtime deps in the fastmcp override — matches the upstream PR which moves it to `optional-dependencies.tasks`. Without this, `pydocket` pulled in `lupa`, whose bundled `libluajit.a` fails to link on aarch64-linux. Multi-arch Docker images now build cleanly on both `amd64` and `arm64` again.
+- **Test shim for fastmcp 2.x / 3.x compat**: `tests/test_tools.py`, `tests/test_integration.py`, and `tests/test_flake_inputs.py` now use `getattr(tool, "fn", tool)` instead of `tool.fn`. FastMCP 2.x and the PyPI wheel of 3.2.4 wrap `@mcp.tool()` as `FunctionTool` (has `.fn`), while the nix-built 3.2.4 returns a plain async function. Same shim the `.pi` wrapper already uses.
+
+### ⚠️ Breaking (for package consumers)
+
+- If you had `fastmcp==2.x` pinned elsewhere in your environment alongside `mcp-nixos`, pip/uv will now refuse to resolve. Upgrade fastmcp to >=3.2.0 or remove the pin.
+
+### 🧹 Docs
+
+- `CLAUDE.md` updated to say "FastMCP 3.x server" and cite the actual pin (`fastmcp>=3.2.0`).
+
+### 🪲 Known non-issues
+
+- The overlay keeps `py-key-value-aio` at nixpkgs' 0.3.0, which fastmcp 3.2.4 formally wants at >=0.4.4 with the `filetree` extra. This only affects the `fastmcp.server.auth.oauth_proxy` import path (missing `aiofile`) — not used by mcp-nixos. Tracked in #129; resolves naturally when nixpkgs PR #510339 lands.
+
+## Installation
+
+```bash
+# Install with pip
+pip install mcp-nixos==2.4.0
+
+# Install with uv
+uv pip install mcp-nixos==2.4.0
+
+# Run directly with nix
+nix run github:utensils/mcp-nixos
+```
+
+## Docker Images
+
+```bash
+# Pull from Docker Hub
+docker pull utensils/mcp-nixos:2.4.0
+
+# Pull from GitHub Container Registry
+docker pull ghcr.io/utensils/mcp-nixos:2.4.0
+```
+
+## Migration Notes
+
+No runtime or configuration changes. The only practical impact is the transitive dependency upgrade — if anything else in your environment holds fastmcp to 2.x, relax that pin.
+
+## Contributors
+
+- James Brink (@utensils) — FastMCP 3 upgrade, flake overlay, release
+- Reporter: @JamieMagee (#127) — flagged the downstream nixpkgs upgrade blocker
+
+---
+
 # MCP-NixOS: v2.3.2 Release Notes - Local Agent Tool Descriptions
 
 ## Overview
