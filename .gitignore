@@ -88,10 +88,11 @@ TODO.md
 /.pi/node_modules/
 /.pi/package-lock.json
 
-# Website (Next.js)
+# Website (VitePress)
 /website/node_modules/
-/website/.next/
 /website/out/
+/website/.vitepress/cache/
+/website/.vitepress/dist/
 /website/.vercel/
 /website/.env*.local
 /website/npm-debug.log*
@@ -101,4 +102,8 @@ TODO.md
 /website/.pnpm-store/
 /website/.DS_Store
 /website/*.pem
+
+# Claude Code runtime state
+.claude/scheduled_tasks.lock
+
 reference-mcp-coroot/
