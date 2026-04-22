@@ -25,6 +25,7 @@ nix_fn = getattr(nix, "fn", nix)
 nix_versions_fn = getattr(nix_versions, "fn", nix_versions)
 
 
+@pytest.mark.unit
 class TestNixToolValidation:
     """Test input validation for the nix tool."""
 
@@ -51,6 +52,23 @@ class TestNixToolValidation:
         result = await nix_fn(action="search", query="test", source="invalid")
         assert "Error" in result
         assert "nixos" in result and "home-manager" in result
+
+    @pytest.mark.asyncio
+    async def test_info_flakes_redirects_to_search(self):
+        """action=info with source=flakes should point at action=search with a JSON example."""
+        result = await nix_fn(action="info", source="flakes", query="test")
+        assert "Error" in result
+        assert '"action": "search"' in result
+        assert '"source": "flakes"' in result
+
+    @pytest.mark.asyncio
+    async def test_info_unknown_source_uses_prose_not_pipes(self):
+        """Unknown sources for action=info keep the allowlist error but use commas, not pipes."""
+        result = await nix_fn(action="info", source="bogus", query="test")
+        assert "Error" in result
+        assert "Unknown source" in result
+        assert "|" not in result
+        assert "nixos, home-manager" in result
 
     @pytest.mark.asyncio
     async def test_browse_nixos_redirects_to_search(self):

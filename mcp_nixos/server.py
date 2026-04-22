@@ -10,6 +10,7 @@ All responses are formatted as human-readable plain text for optimal LLM interac
 """
 
 import asyncio
+import json
 import os
 import re
 import sys
@@ -258,6 +259,11 @@ async def nix(
     elif action == "info":
         if not query:
             return error('Name required for info. Example: {"action": "info", "query": "firefox"}')
+        if source == "flakes":
+            example = json.dumps({"action": "search", "source": "flakes", "query": query})
+            return error(
+                f"action=info is not supported for source=flakes. Use action=search instead. Example: {example}."
+            )
         if source == "nixos":
             if type not in ["package", "packages", "option", "options"]:
                 return error(
@@ -340,7 +346,7 @@ async def nix(
         # Validate type parameter for flake-inputs
         # Note: "packages" is accepted as alias for "list" (default type parameter)
         if type not in ["list", "ls", "read", "packages"]:
-            return error("Type must be list|ls|read for flake-inputs")
+            return error("Type must be one of: list, ls, read for flake-inputs")
 
         # Handle limit for read operation
         read_limit = limit
@@ -362,7 +368,7 @@ async def nix(
                 return error("Query required for read (input:path format)")
             return await _flake_inputs_read(flake_dir, query, read_limit)
         else:
-            return error("Type must be list|ls|read for flake-inputs")
+            return error("Type must be one of: list, ls, read for flake-inputs")
 
     elif action == "cache":
         if not query:
