@@ -445,6 +445,312 @@ class TestNixToolChannels:
         mock_list.assert_called_once()
 
 
+@pytest.mark.unit
+class TestInfoMatchPriority:
+    """Regression tests for GitHub #146.
+
+    action=info must prefer exact attribute match over pname match, and must
+    explicitly signal pname-based disambiguation when a query resolves to one
+    of several packages sharing a pname.
+    """
+
+    @patch("mcp_nixos.sources.nixos.es_query")
+    @patch("mcp_nixos.sources.nixos.get_channels")
+    @pytest.mark.asyncio
+    async def test_info_prefers_attr_match_over_pname(self, mock_channels, mock_es):
+        """Exact attr=firefox must win over the first pname=firefox candidate.
+
+        Before #146, pname matched first with size:1, which meant ES could
+        arbitrarily return firefox-esr for `info firefox`. Attr-first makes
+        the canonical package deterministic.
+        """
+        from mcp_nixos.sources.nixos import _info_nixos
+
+        mock_channels.return_value = {"unstable": "nixos-unstable"}
+        mock_es.return_value = [
+            {
+                "_source": {
+                    "package_pname": "firefox",
+                    "package_attr_name": "firefox",
+                    "package_pversion": "149.0.2",
+                    "package_description": "Web browser",
+                }
+            }
+        ]
+
+        result = _info_nixos("firefox", "package", "unstable")
+
+        first_query = mock_es.call_args_list[0][0][1]
+        must_terms = [c for c in first_query["bool"]["must"] if "term" in c]
+        assert any("package_attr_name" in c["term"] for c in must_terms), (
+            "First ES call must be an attribute-path lookup, not a pname lookup"
+        )
+        assert "firefox-esr" not in result
+        assert "Package: firefox" in result
+
+    @patch("mcp_nixos.sources.nixos.es_query")
+    @patch("mcp_nixos.sources.nixos.get_channels")
+    @pytest.mark.asyncio
+    async def test_info_signals_pname_ambiguity(self, mock_channels, mock_es):
+        """When only a pname match is possible and multiple attrs share it, flag it."""
+        from mcp_nixos.sources.nixos import _info_nixos
+
+        mock_channels.return_value = {"unstable": "nixos-unstable"}
+        mock_es.side_effect = [
+            [],  # attr lookup: miss
+            [
+                {
+                    "_source": {
+                        "package_pname": "chicken-srfi",
+                        "package_attr_name": "chickenPackages_5.chickenEggs.srfi-1",
+                        "package_pversion": "1",
+                    }
+                },
+                {
+                    "_source": {
+                        "package_pname": "chicken-srfi",
+                        "package_attr_name": "chickenPackages_5.chickenEggs.srfi-2",
+                        "package_pversion": "2",
+                    }
+                },
+            ],
+        ]
+
+        result = _info_nixos("chicken-srfi", "package", "unstable")
+
+        assert "pname shared by multiple packages" in result
+        assert "chickenPackages_5.chickenEggs.srfi-1" in result
+        assert "chickenPackages_5.chickenEggs.srfi-2" in result
+        assert "disambiguate" in result
+        # The retry hint must be a copy-pasteable JSON object, not a pseudo-call.
+        # The hint picks one of the "other" attrs (not the chosen one) to disambiguate to.
+        assert '"action": "info"' in result
+        assert '"query": "chickenPackages_5.chickenEggs.srfi-2"' in result
+
+    @patch("mcp_nixos.sources.nixos.es_query")
+    @patch("mcp_nixos.sources.nixos.get_channels")
+    @pytest.mark.asyncio
+    async def test_info_ambiguity_tiebreak_is_deterministic(self, mock_channels, mock_es):
+        """When no canonical exists, the chosen attr must be deterministic across ES orderings."""
+        from mcp_nixos.sources.nixos import _info_nixos
+
+        mock_channels.return_value = {"unstable": "nixos-unstable"}
+
+        def candidates(order: list[str]) -> list[dict]:
+            return [
+                {"_source": {"package_pname": "chicken-srfi", "package_attr_name": a, "package_pversion": "1"}}
+                for a in order
+            ]
+
+        # ES returns the hits in one order the first time, reversed the second.
+        # The tie-break must select the same attribute regardless.
+        mock_es.side_effect = [
+            [],
+            candidates(["chickenPackages_5.chickenEggs.srfi-2", "chickenPackages_5.chickenEggs.srfi-1"]),
+            [],
+            candidates(["chickenPackages_5.chickenEggs.srfi-1", "chickenPackages_5.chickenEggs.srfi-2"]),
+        ]
+        r1 = _info_nixos("chicken-srfi", "package", "unstable")
+        r2 = _info_nixos("chicken-srfi", "package", "unstable")
+        # Both calls must agree on the chosen attribute (alphabetically first).
+        assert "Attribute: chickenPackages_5.chickenEggs.srfi-1" in r1
+        assert "Attribute: chickenPackages_5.chickenEggs.srfi-1" in r2
+
+    @patch("mcp_nixos.sources.nixos.es_query")
+    @patch("mcp_nixos.sources.nixos.get_channels")
+    @pytest.mark.asyncio
+    async def test_info_no_ambiguity_note_for_single_pname_hit(self, mock_channels, mock_es):
+        """A single pname hit with no attr match must not emit the disambiguation note."""
+        from mcp_nixos.sources.nixos import _info_nixos
+
+        mock_channels.return_value = {"unstable": "nixos-unstable"}
+        mock_es.side_effect = [
+            [],
+            [
+                {
+                    "_source": {
+                        "package_pname": "qt6ct",
+                        "package_attr_name": "kdePackages.qt6ct",
+                        "package_pversion": "0.11",
+                    }
+                }
+            ],
+        ]
+
+        result = _info_nixos("qt6ct", "package", "unstable")
+        assert "pname shared by multiple packages" not in result
+        assert "kdePackages.qt6ct" in result
+
+
+@pytest.mark.unit
+class TestChannelRevisions:
+    """GitHub #146: action=channels surfaces nixpkgs HEAD commit per channel."""
+
+    def test_commit_extracted_from_unstable_index_name(self):
+        """When the ES index name embeds a 40-char hex commit, it is reported as indexed."""
+        from mcp_nixos.sources.base import _channel_revision
+
+        rev, source = _channel_revision(
+            "unstable",
+            "nixos-46-unstable-b12141ef619e0a9c1c84dc8c684040326f27cdcc",
+            {"unstable": "nixos-46-unstable-b12141ef619e0a9c1c84dc8c684040326f27cdcc"},
+        )
+        assert rev == "b12141ef619e0a9c1c84dc8c684040326f27cdcc"
+        assert source == "indexed"
+
+    def test_list_channels_labels_indexed_revision(self):
+        """When the SHA is embedded in the index, label it as 'Revision (indexed)'."""
+        from unittest.mock import patch
+
+        from mcp_nixos.sources.base import _list_channels
+
+        fake_channels = {
+            "unstable": "nixos-46-unstable-b12141ef619e0a9c1c84dc8c684040326f27cdcc",
+        }
+        with (
+            patch("mcp_nixos.sources.base.get_channels", return_value=fake_channels),
+            patch("mcp_nixos.sources.base.channel_cache") as mock_cache,
+        ):
+            mock_cache.using_fallback = False
+            mock_cache.get_available.return_value = {
+                "nixos-46-unstable-b12141ef619e0a9c1c84dc8c684040326f27cdcc": "1,000 documents"
+            }
+            result = _list_channels()
+
+        channels_block = result.split("Note:", 1)[0]
+        assert "Revision (indexed): b12141ef619e0a9c1c84dc8c684040326f27cdcc" in channels_block
+        assert "Branch: nixos-unstable" in channels_block
+        # Must NOT mislabel an indexed commit as a branch HEAD in the channel entry.
+        assert "Branch HEAD" not in channels_block
+
+    def test_list_channels_labels_branch_head_when_not_indexed(self):
+        """For release channels we can only look up branch HEAD — label it honestly."""
+        import time
+        from unittest.mock import patch
+
+        from mcp_nixos.sources.base import _BRANCH_REVS, _list_channels
+
+        _BRANCH_REVS.clear()
+        _BRANCH_REVS["nixos-25.11"] = ("abc1234abc1234abc1234abc1234abc1234abcd", time.monotonic())
+        fake_channels = {"25.11": "latest-46-nixos-25.11"}
+        try:
+            with (
+                patch("mcp_nixos.sources.base.get_channels", return_value=fake_channels),
+                patch("mcp_nixos.sources.base.channel_cache") as mock_cache,
+            ):
+                mock_cache.using_fallback = False
+                mock_cache.get_available.return_value = {"latest-46-nixos-25.11": "100,000 documents"}
+                result = _list_channels()
+        finally:
+            _BRANCH_REVS.clear()
+
+        channels_block = result.split("Note:", 1)[0]
+        assert "Branch: nixos-25.11" in channels_block
+        assert "Branch HEAD: abc1234abc1234abc1234abc1234abc1234abcd" in channels_block
+        assert "may be ahead of indexed data" in channels_block
+        # Must NOT imply this is the indexed commit in the channel entry.
+        assert "Revision (indexed)" not in channels_block
+
+    def test_branch_rev_cache_respects_ttl(self):
+        """A stale entry past the TTL must trigger a re-fetch (CodeRabbit/Copilot review)."""
+        import time
+        from unittest.mock import MagicMock, patch
+
+        from mcp_nixos.sources import base as base_mod
+
+        base_mod._BRANCH_REVS.clear()
+        # Seed a stale entry: timestamp is well past the TTL relative to now.
+        # Using a large negative offset rather than 0.0 so the test works in
+        # fresh processes where time.monotonic() starts near zero.
+        stale_ts = time.monotonic() - (base_mod._BRANCH_REV_TTL * 10)
+        base_mod._BRANCH_REVS["nixos-25.11"] = ("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", stale_ts)
+        try:
+            fake_response = MagicMock()
+            fake_response.status_code = 200
+            fake_response.json.return_value = {"sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+            with patch("mcp_nixos.sources.base.requests.get", return_value=fake_response) as mock_get:
+                rev, source = base_mod._channel_revision(
+                    "25.11", "latest-46-nixos-25.11", {"25.11": "latest-46-nixos-25.11"}
+                )
+            assert rev == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            assert source == "branch_head"
+            call_kwargs = mock_get.call_args.kwargs
+            assert call_kwargs["headers"]["User-Agent"].startswith("mcp-nixos/")
+        finally:
+            base_mod._BRANCH_REVS.clear()
+
+    def test_branch_rev_invalid_json_response_falls_back(self):
+        """A 200 with a non-JSON body must be treated as a miss, not crash the listing."""
+        import time
+        from unittest.mock import MagicMock, patch
+
+        from mcp_nixos.sources import base as base_mod
+
+        base_mod._BRANCH_REVS.clear()
+        # Prior stale cache entry — we should return it on the fallback path.
+        base_mod._BRANCH_REVS["nixos-25.11"] = (
+            "ddddddddddddddddddddddddddddddddddddddd0",
+            time.monotonic() - (base_mod._BRANCH_REV_TTL * 10),
+        )
+        try:
+            fake_response = MagicMock()
+            fake_response.status_code = 200
+            fake_response.json.side_effect = ValueError("not json")
+            with patch("mcp_nixos.sources.base.requests.get", return_value=fake_response):
+                rev, source = base_mod._channel_revision(
+                    "25.11", "latest-46-nixos-25.11", {"25.11": "latest-46-nixos-25.11"}
+                )
+            # Must not raise; falls back to stale cached value.
+            assert rev == "ddddddddddddddddddddddddddddddddddddddd0"
+            assert source == "branch_head"
+        finally:
+            base_mod._BRANCH_REVS.clear()
+
+    def test_branch_rev_cache_serves_within_ttl(self):
+        """A fresh cached entry must NOT trigger a network call."""
+        import time
+        from unittest.mock import patch
+
+        from mcp_nixos.sources import base as base_mod
+
+        base_mod._BRANCH_REVS.clear()
+        base_mod._BRANCH_REVS["nixos-25.11"] = ("cccccccccccccccccccccccccccccccccccccccc", time.monotonic())
+        try:
+            with patch("mcp_nixos.sources.base.requests.get") as mock_get:
+                rev, source = base_mod._channel_revision(
+                    "25.11", "latest-46-nixos-25.11", {"25.11": "latest-46-nixos-25.11"}
+                )
+            assert rev == "cccccccccccccccccccccccccccccccccccccccc"
+            assert source == "branch_head"
+            mock_get.assert_not_called()
+        finally:
+            base_mod._BRANCH_REVS.clear()
+
+
+@pytest.mark.unit
+class TestServerInstructions:
+    """GitHub #146: the MCP server must surface instructions prose to clients."""
+
+    def test_server_has_instructions(self):
+        from mcp_nixos.server import mcp
+
+        instructions = getattr(mcp, "instructions", "") or ""
+        assert "nixpkgs" in instructions.lower()
+        assert "nix_versions" in instructions
+
+    def test_server_instructions_use_json_call_shapes(self):
+        """Recipe examples must match the JSON-object shape models actually send."""
+        from mcp_nixos.server import mcp
+
+        instructions = getattr(mcp, "instructions", "") or ""
+        # The quoted JSON object form is what hosts serialize — the bare
+        # `nix(action=...)` pseudo-call form would teach models a syntax that
+        # does not work over MCP.
+        assert '{"action":"info","query":"X","channel":"Y"}' in instructions
+        assert '{"action":"channels"}' in instructions
+        assert "action=" not in instructions.replace('"action":', "")
+
+
 class TestNixVersionsValidation:
     """Test input validation for nix_versions tool."""
 

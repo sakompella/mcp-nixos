@@ -1,9 +1,12 @@
 """Base functionality shared across data sources."""
 
+import re
+import time
 from typing import Any
 
 import requests
 
+from .. import __version__
 from ..caches import channel_cache
 from ..config import (
     DARWIN_URL,
@@ -13,6 +16,20 @@ from ..config import (
     APIError,
 )
 from ..utils import error, parse_html_options
+
+# Match the 40-char hex commit appended to unstable ES indices,
+# e.g. `nixos-46-unstable-b12141ef619e0a9c1c84dc8c684040326f27cdcc`.
+_COMMIT_IN_INDEX = re.compile(r"-([0-9a-f]{40})$")
+
+# Short per-process cache for GitHub branch HEAD lookups, keyed by nixpkgs
+# branch name. Entries expire after ~10 minutes so a long-running MCP
+# process does not keep reporting a stale HEAD after upstream advances
+# (see CodeRabbit review on PR #147). Channel aliases pointing to the
+# same branch share a single lookup.
+_BRANCH_REV_TTL = 600.0
+_BRANCH_REVS: dict[str, tuple[str, float]] = {}
+
+_GITHUB_USER_AGENT = f"mcp-nixos/{__version__}"
 
 # =============================================================================
 # Channel helpers
@@ -80,8 +97,76 @@ def es_query(index: str, query: dict[str, Any], size: int = 20) -> list[dict[str
 # =============================================================================
 
 
+def _channel_to_branch(name: str, index: str, resolved: dict[str, str]) -> str:
+    """Map a channel name to its nixpkgs branch for commit lookups."""
+    if "unstable" in name or "unstable" in index:
+        return "nixos-unstable"
+    if name in {"stable", "beta"}:
+        # Resolve to the release version indirectly via the ES index name.
+        parts = index.split("-")
+        if len(parts) >= 4 and re.match(r"^\d+\.\d+$", parts[3]):
+            return f"nixos-{parts[3]}"
+        return ""
+    if re.match(r"^\d+\.\d+$", name):
+        return f"nixos-{name}"
+    return ""
+
+
+def _channel_revision(name: str, index: str, resolved: dict[str, str]) -> tuple[str, str]:
+    """Resolve a commit for a channel along with its provenance.
+
+    Returns ``(sha, source)`` where ``source`` is:
+
+    - ``"indexed"`` — the commit is embedded in the ES index name, so the
+      package/option data returned for this channel was built from exactly
+      this commit. Safe to compare against with ``nix_versions``.
+    - ``"branch_head"`` — best-effort GitHub API fetch of the channel
+      branch's current HEAD. This may be a few commits ahead of the
+      published search index, so it is a *pointer* to the channel, not a
+      claim about the indexed data.
+    - ``""`` (empty) when nothing could be resolved.
+    """
+    embedded = _COMMIT_IN_INDEX.search(index)
+    if embedded:
+        return embedded.group(1), "indexed"
+
+    branch = _channel_to_branch(name, index, resolved)
+    if not branch:
+        return "", ""
+    cached = _BRANCH_REVS.get(branch)
+    now = time.monotonic()
+    if cached and (now - cached[1]) < _BRANCH_REV_TTL:
+        return cached[0], "branch_head"
+
+    try:
+        resp = requests.get(
+            f"https://api.github.com/repos/NixOS/nixpkgs/commits/{branch}",
+            headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": _GITHUB_USER_AGENT,
+            },
+            timeout=4,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            rev = data.get("sha", "") if isinstance(data, dict) else ""
+            if rev:
+                _BRANCH_REVS[branch] = (rev, now)
+                return rev, "branch_head"
+    except (requests.RequestException, ValueError):
+        # ValueError covers json decoding failures on a 200 with a non-JSON
+        # body (rare, but e.g. GitHub interstitials). Treat as a miss so the
+        # channels listing can still fall back to a stale cache or empty rev.
+        pass
+    # Fall back to a stale cached value if the refresh attempt failed —
+    # better to surface last-known HEAD than nothing.
+    if cached:
+        return cached[0], "branch_head"
+    return "", ""
+
+
 def _list_channels() -> str:
-    """List available NixOS channels with status and document counts."""
+    """List available NixOS channels with status, document counts, and HEAD commit."""
     try:
         configured = get_channels()
         available = channel_cache.get_available()
@@ -101,9 +186,28 @@ def _list_channels() -> str:
                     label = f"* {name} (current: {parts[3]})"
             results.append(f"{label} -> {index}")
             results.append(f"  Status: {status} ({doc_count})")
+            rev, source = _channel_revision(name, index, configured)
+            branch = _channel_to_branch(name, index, configured)
+            if branch:
+                results.append(f"  Branch: {branch}")
+            if rev and source == "indexed":
+                # Exact commit the search index was built from — safe to
+                # compare package versions against.
+                results.append(f"  Revision (indexed): {rev}")
+            elif rev and source == "branch_head":
+                # Upstream branch HEAD; the search index for this channel
+                # may lag by a handful of commits.
+                results.append(f"  Branch HEAD: {rev} (upstream; may be ahead of indexed data)")
             results.append("")
 
-        results.append("Note: 'stable' always points to current stable release.")
+        results.append(
+            "Note: 'stable' always points to current stable release. "
+            "'Revision (indexed)' is the exact commit the search index was built from "
+            "(safe to compare against `nix_versions`). 'Branch HEAD' is the upstream "
+            "branch tip, fetched best-effort from GitHub and cached for up to "
+            "10 minutes per process — it may be a few commits ahead of the "
+            "indexed data or a few minutes stale from the upstream ref."
+        )
         return "\n".join(results).strip()
     except Exception as e:
         return error(str(e))
